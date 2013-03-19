@@ -185,16 +185,7 @@ val stdenv = ref (
 	   "7", "N6",
 	   "8", "N7",
 	   "9", "N8",
-	   "H", "Y(λgn.(Zn)1(*n(g(Pn))))", (* Factorial function, obviously *)
-	   "G", "λhk.hk",
-           (* This is about as simple as I can get it *)
-           (* We have inlined G, but not done the main apply (which is where *)
-           (* the IO happens. Run "FF" for the full effect *)
-	   "F", "(λf.(λg.fg)(λg.fg))",
-
-           "C","\\k.k(\\xj.kx)",
-           "G","\\kj.kjI",
-           "F","\\k.Gk(\\xj.Gkx)"
+	   "H", "Y(λgn.(Zn)1(*n(g(Pn))))" (* Factorial function, obviously *)
 	  ] []);
 
 fun addenv n s = stdenv := (n,parse s)::(!stdenv);
