@@ -63,13 +63,6 @@ static inline uint32_t get32(uint8_t *p, size_t offset)
 }
 
 // Rewrite packet to exchange src and dst addresses
-// Compare start and end states
-// Raise exceptions to indicate errors rather than exit()
-// Leave printing errors to caller.
-// Checks: p is non-null, nbytes is big enough for IP header
-// check on other fields - eg header length? 
-// Check IP checksum afterwards.
-// check no other bytes changed by function
 
 void reflect(uint8_t *p, size_t nbytes)
 {
@@ -97,8 +90,6 @@ void reflect(uint8_t *p, size_t nbytes)
 int main(int argc, char *argv[])
 {
   char dev[IFNAMSIZ+1];
-  // Pull out to separate function that i) clears
-  // ii) copies from 
   memset(dev,0,sizeof(dev));
   if (argc > 1) strncpy(dev,argv[1],sizeof(dev)-1);
 
@@ -113,14 +104,12 @@ int main(int argc, char *argv[])
   // not effective as we will be enabling it later.
   cap_flag_value_t cap_permitted;
   CHECKSYS(cap_get_flag(caps, cap, CAP_PERMITTED, &cap_permitted));
-#if 1
   cap_flag_value_t cap_effective;
   cap_flag_value_t cap_inheritable;
   CHECKSYS(cap_get_flag(caps, cap, CAP_EFFECTIVE, &cap_effective));
   CHECKSYS(cap_get_flag(caps, cap, CAP_INHERITABLE, &cap_inheritable));
   fprintf(stderr, "Capability %s: %d %d %d\n",
           capname, cap_effective, cap_inheritable, cap_permitted);
-#endif
   if (!cap_permitted) {
     fprintf(stderr, "%s not permitted, exiting\n", capname);
     exit(0);
@@ -144,12 +133,7 @@ int main(int argc, char *argv[])
   CHECKSYS(cap_free(caps));
 
   fprintf(stderr, "Created tun device %s\n", dev);
-
-  // This seems to be a perfectly generally simple responder process
-  // ie. read from fd, write modified data back to fd.
-  // More generally: get some input, process, output.
-  // Might be same fd, different fd, not an fd at all, just a source and
-  // a sink.
+  
   uint8_t buf[2048];
   while(true) {
     // Sit in a loop, read a packet from fd, reflect addresses
