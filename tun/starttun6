@@ -1,0 +1,17 @@
+#!/bin/sh
+if [ $# = 0 ] ; then
+ TUNIF=tun0
+else
+ TUNIF=$1
+fi
+
+ip link set $TUNIF up
+# ip addr add 10.0.0.1/8 dev $TUNIF
+# Add a link local address to interface
+ip -6 addr add fe80::1/64 dev $TUNIF
+# Also a RFC4193 local private network address
+# From http://unique-local-ipv6.com: fd2a:cd2c:8bc4::/48
+# ie. a random global id of 2acd2c8bc4
+ip -6 route add fd2a:cd2c:8bc4:0::/64 dev $TUNIF
+ip -6 route add fd2a:cd2c:8bc4:1100::/56 dev $TUNIF
+ip -6 route add fd40:bd2f:7ba0::/48 dev $TUNIF
