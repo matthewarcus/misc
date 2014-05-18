@@ -84,7 +84,7 @@ int thresh = 0;
 int maxloops = 0;
 
 // Main function, returns distance squared of closest points
-// Templated on member accesses so we can easily use x-wise and y-wise.
+// Templated on member accessors so we can use easily, both x-wise and y-wise.
 
 template<double Point::*xf, double Point::*yf>
 double closest(const int *px, const int *py, int size)
