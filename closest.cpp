@@ -126,11 +126,11 @@ double closest(const int *px, const int *py, int size)
   {
     vector<int> tmp;
     double x0 = points[p0].*xf; // The position of central line
-    double sigma = sqrt(dist);  // Get half-strip width
+    double delta = sqrt(dist);  // Get half-strip width
     for (int i = 0; i < size; i++) {
       int p = py[i];
       double x = points[p].*xf;
-      if (x >= x0-sigma && x <= x0+sigma) {
+      if (x >= x0-delta && x <= x0+delta) {
 	tmp.push_back(p);
       }
     };
@@ -141,7 +141,7 @@ double closest(const int *px, const int *py, int size)
       for (int j= i+1; j < npoints; j++) {
 	const Point &p2 = points[tmp[j]];
 	// Ordered by y, so break if distance too long
-	if (p2.*yf - p1.*yf > sigma) break;
+	if (p2.*yf - p1.*yf > delta) break;
 	// We could check if p2 is in the other half and
 	// save a comparison if it isn't.
 	double d = Point::dist2(p1,p2);
