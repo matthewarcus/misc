@@ -14,10 +14,15 @@
 
 #include <linux/if.h>
 #include <linux/if_tun.h>
-#include <sys/capability.h>
 
-// Might need eg. 'sudo apt-get install libcap-dev' and link with -lcap
+// Optionally, compile to use capabilities (to avoid running as root or needind setuid).
+// Might need eg. 'sudo apt-get install libcap-dev libcap2-bin' and link with -lcap
 // sudo setcap cap_net_admin+p ./reflect
+//#define USE_CAPABILITIES
+#if defined USE_CAPABILITIES
+#include <sys/capability.h>
+#endif
+
 
 // Some handy macros to help with error checking
 #define CHECKAUX(e,s)                            \
@@ -163,6 +168,7 @@ int main(int argc, char *argv[])
   memset(dev,0,sizeof(dev));
   if (devname != NULL) strncpy(dev,devname,sizeof(dev)-1);
 
+#if defined USE_CAPABILITIES
   cap_t caps = cap_get_proc();
   CHECK(caps != NULL);
 
@@ -194,15 +200,18 @@ int main(int argc, char *argv[])
   // but also make it effective
   CHECKSYS(cap_set_flag(caps, CAP_EFFECTIVE, 1, &cap, CAP_SET));
   CHECKSYS(cap_set_proc(caps));
+#endif
 
   // Allocate the tun device
   int fd = tun_alloc(dev);
   if (fd < 0) exit(0);
 
+#if defined USE_CAPABILITIES
   // And before anything else, clear all our capabilities
   CHECKSYS(cap_clear(caps));
   CHECKSYS(cap_set_proc(caps));
   CHECKSYS(cap_free(caps));
+#endif
 
   if (verbosity > 0) {
     printf("Created tun device %s\n", dev);
