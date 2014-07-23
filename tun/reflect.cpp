@@ -17,12 +17,13 @@
 
 // Optionally, compile to use capabilities (to avoid running as root or needind setuid).
 // Might need eg. 'sudo apt-get install libcap-dev libcap2-bin' and link with -lcap
+// Set capabilities (see Makefile) with:
 // sudo setcap cap_net_admin+p ./reflect
+
 //#define USE_CAPABILITIES
 #if defined USE_CAPABILITIES
 #include <sys/capability.h>
 #endif
-
 
 // Some handy macros to help with error checking
 #define CHECKAUX(e,s)                            \
@@ -36,12 +37,6 @@
 #define CHECKFD(e) (CHECKAUX((e)>=0,#e))
 
 #define STRING(e) #e
-
-// Define some fixed offsets
-static const size_t IPv4SrcHdrOffset = 12;
-static const size_t IPv4DstHdrOffset = 16;
-static const size_t IPv6SrcHdrOffset = 8;
-static const size_t IPv6DstHdrOffset = 24;
 
 int verbosity = 0;
 
@@ -77,6 +72,18 @@ static inline uint32_t get32(uint8_t *p)
   return n;
 }
 
+static inline uint16_t get16(uint8_t *p)
+{
+  uint16_t n;
+  memcpy(&n,p,sizeof(n));
+  return n;
+}
+
+static inline uint8_t get8(uint8_t *p)
+{
+  return *p;
+}
+
 static void printbytes(uint8_t *p, size_t nbytes)
 {
   for (size_t i = 0; i < nbytes; i++) {
@@ -106,8 +113,13 @@ void swap32(uint8_t *p, uint8_t *q)
 #define DST_OFFSET4 16
 #define SRC_OFFSET6 8
 #define DST_OFFSET6 24
+#define HLEN_OFFSET 0
+#define PROTO_OFFSET 9
+#define PROTO_ICMP 1
+#define PROTO_UDP 17
+#define PROTO_TCP 6
  
-void reflect(uint8_t *p, size_t nbytes)
+void reflect(uint8_t *p, size_t nbytes, const char *dev)
 {
   uint8_t version = p[0] >> 4;
   switch (version) {
@@ -115,9 +127,34 @@ void reflect(uint8_t *p, size_t nbytes)
     if (verbosity > 0) {
       char fromaddr[INET_ADDRSTRLEN];
       char toaddr[INET_ADDRSTRLEN];
+      int headerlen = 4*(p[HLEN_OFFSET]&0x0f);
+      int proto = p[PROTO_OFFSET];
       inet_ntop(AF_INET, p+SRC_OFFSET4, fromaddr, sizeof(fromaddr));
       inet_ntop(AF_INET, p+DST_OFFSET4, toaddr, sizeof(toaddr));
-      printf("%zu: %s->%s\n", nbytes, fromaddr, toaddr);
+      uint8_t *phdr = p+headerlen;
+      if (proto == PROTO_TCP) {
+        // Should do this for IPv6 as well
+	uint16_t srcport = ntohs(get16(phdr+0));
+	uint16_t dstport = ntohs(get16(phdr+2));
+	uint16_t flags = 0x0f & get8(phdr+13);
+	char flagstring[16];
+	snprintf(flagstring, sizeof(flagstring),
+		 "%s%s%s%s",
+		 (flags&1)?"F":"",
+		 (flags&2)?"S":"", 
+		 (flags&4)?"R":"",
+		 (flags&8)?"P":"");
+	printf("dev=%s src=%s:%hu dst=%s:%hu len=%zu proto=%d flags=%s\n", 
+               dev, fromaddr, srcport, toaddr, dstport, nbytes, proto, flagstring);
+      } else if (proto == PROTO_UDP) {
+	uint16_t srcport = ntohs(get16(phdr+0));
+	uint16_t dstport = ntohs(get16(phdr+2));
+	printf("dev=%s src=%s:%hu dst=%s:%hu len=%zu proto=%d\n",
+               dev, fromaddr, srcport, toaddr, dstport, nbytes, proto);
+      } else {
+	printf("dev=%s src=%s dst=%s len=%zu proto=%d\n",
+               dev, fromaddr, toaddr, nbytes, proto);
+      }
     }
     if (verbosity > 1) {
       printbytes(p, nbytes);
@@ -223,7 +260,7 @@ int main(int argc, char *argv[])
     ssize_t nread = read(fd,buf,sizeof(buf));
     CHECK(nread >= 0);
     if (nread == 0) break;
-    reflect(buf,nread);
+    reflect(buf,nread,dev);
     ssize_t nwrite = write(fd,buf,nread);
     CHECK(nwrite == nread);
   }
