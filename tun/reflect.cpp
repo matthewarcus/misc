@@ -20,7 +20,7 @@
 // Set capabilities (see Makefile) with:
 // sudo setcap cap_net_admin+p ./reflect
 
-//#define USE_CAPABILITIES
+#define USE_CAPABILITIES
 #if defined USE_CAPABILITIES
 #include <sys/capability.h>
 #endif
@@ -53,7 +53,8 @@ int tun_alloc(char *dev)
 
   struct ifreq ifr; 
   memset(&ifr, 0, sizeof(ifr)); 
-  ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
+  //ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
+  ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
   strncpy(ifr.ifr_name, dev, IFNAMSIZ); 
   CHECKSYS(ioctl(fd, TUNSETIFF, (void *) &ifr));
   strncpy(dev, ifr.ifr_name, IFNAMSIZ); 
@@ -118,46 +119,47 @@ void swap32(uint8_t *p, uint8_t *q)
 #define PROTO_ICMP 1
 #define PROTO_UDP 17
 #define PROTO_TCP 6
- 
+
+void describe4(uint8_t *p, size_t nbytes, const char *dev)
+{
+   char fromaddr[INET_ADDRSTRLEN];
+   char toaddr[INET_ADDRSTRLEN];
+   int headerlen = 4*(p[HLEN_OFFSET]&0x0f);
+   int proto = p[PROTO_OFFSET];
+   inet_ntop(AF_INET, p+SRC_OFFSET4, fromaddr, sizeof(fromaddr));
+   inet_ntop(AF_INET, p+DST_OFFSET4, toaddr, sizeof(toaddr));
+   uint8_t *phdr = p+headerlen;
+   if (proto == PROTO_TCP) {
+      // Should do this for IPv6 as well
+      uint16_t srcport = ntohs(get16(phdr+0));
+      uint16_t dstport = ntohs(get16(phdr+2));
+      uint16_t flags = 0x0f & get8(phdr+13);
+      char flagstring[16];
+      snprintf(flagstring, sizeof(flagstring),
+               "%s%s%s%s",
+               (flags&1)?"F":"",
+               (flags&2)?"S":"", 
+               (flags&4)?"R":"",
+               (flags&8)?"P":"");
+      printf("dev=%s src=%s:%hu dst=%s:%hu len=%zu proto=%d flags=%s\n", 
+             dev, fromaddr, srcport, toaddr, dstport, nbytes, proto, flagstring);
+   } else if (proto == PROTO_UDP) {
+      uint16_t srcport = ntohs(get16(phdr+0));
+      uint16_t dstport = ntohs(get16(phdr+2));
+      printf("dev=%s src=%s:%hu dst=%s:%hu len=%zu proto=%d\n",
+             dev, fromaddr, srcport, toaddr, dstport, nbytes, proto);
+   } else {
+      printf("dev=%s src=%s dst=%s len=%zu proto=%d\n",
+             dev, fromaddr, toaddr, nbytes, proto);
+   }
+}
 void reflect(uint8_t *p, size_t nbytes, const char *dev)
 {
   uint8_t version = p[0] >> 4;
   switch (version) {
   case 4:
     if (verbosity > 0) {
-      char fromaddr[INET_ADDRSTRLEN];
-      char toaddr[INET_ADDRSTRLEN];
-      int headerlen = 4*(p[HLEN_OFFSET]&0x0f);
-      int proto = p[PROTO_OFFSET];
-      inet_ntop(AF_INET, p+SRC_OFFSET4, fromaddr, sizeof(fromaddr));
-      inet_ntop(AF_INET, p+DST_OFFSET4, toaddr, sizeof(toaddr));
-      uint8_t *phdr = p+headerlen;
-      if (proto == PROTO_TCP) {
-        // Should do this for IPv6 as well
-	uint16_t srcport = ntohs(get16(phdr+0));
-	uint16_t dstport = ntohs(get16(phdr+2));
-	uint16_t flags = 0x0f & get8(phdr+13);
-	char flagstring[16];
-	snprintf(flagstring, sizeof(flagstring),
-		 "%s%s%s%s",
-		 (flags&1)?"F":"",
-		 (flags&2)?"S":"", 
-		 (flags&4)?"R":"",
-		 (flags&8)?"P":"");
-	printf("dev=%s src=%s:%hu dst=%s:%hu len=%zu proto=%d flags=%s\n", 
-               dev, fromaddr, srcport, toaddr, dstport, nbytes, proto, flagstring);
-      } else if (proto == PROTO_UDP) {
-	uint16_t srcport = ntohs(get16(phdr+0));
-	uint16_t dstport = ntohs(get16(phdr+2));
-	printf("dev=%s src=%s:%hu dst=%s:%hu len=%zu proto=%d\n",
-               dev, fromaddr, srcport, toaddr, dstport, nbytes, proto);
-      } else {
-	printf("dev=%s src=%s dst=%s len=%zu proto=%d\n",
-               dev, fromaddr, toaddr, nbytes, proto);
-      }
-    }
-    if (verbosity > 1) {
-      printbytes(p, nbytes);
+       describe4(p,nbytes,dev);
     }
     // Swap source and dest of an IPv4 packet
     // No checksum recalculation is necessary
@@ -171,9 +173,6 @@ void reflect(uint8_t *p, size_t nbytes, const char *dev)
       inet_ntop(AF_INET6, p+DST_OFFSET6, toaddr, sizeof(toaddr));
       printf("%zu: %s->%s\n", nbytes, fromaddr, toaddr);
     }
-    if (verbosity > 1) {
-      printbytes(p, nbytes);
-    }
     // Swap source and dest of an IPv6 packet
     // No checksum recalculation is necessary
     for (int i = 0; i < 4; i++) {
@@ -181,7 +180,19 @@ void reflect(uint8_t *p, size_t nbytes, const char *dev)
     }
     break;
   default:
-    fprintf(stderr, "Unknown protocol %u\n", version);
+     uint16_t etype;
+     memcpy(&etype,p+12,2);
+     etype = ntohs(etype);
+     printf("Unknown protocol %u: nbytes=%zu etype=%04x\n",
+            version, nbytes, etype);
+     printf("Addr1: "); printbytes(p,6);
+     printf("Addr2: "); printbytes(p+6,6);
+     if (etype == 0x0800) {
+        describe4(p+14,nbytes-16,dev);
+     }
+  }
+  if (verbosity > 1) {
+     printbytes(p, nbytes);
   }
 }
 
