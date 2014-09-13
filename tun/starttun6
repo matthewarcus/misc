@@ -1,4 +1,5 @@
 #!/bin/sh
+# Despite its name, this works for tap devices too
 if [ $# = 0 ] ; then
  TUNIF=tun0
 else

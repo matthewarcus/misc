@@ -45,7 +45,7 @@ int verbosity = 0;
 
 // Return the fd of the new tun device
 // Sets dev to the actual device name
-int tun_alloc(char *dev) 
+int tun_alloc(char *dev, int devtype = IFF_TUN) 
 {
   assert(dev != NULL);
   int fd = open("/dev/net/tun", O_RDWR);
@@ -54,7 +54,7 @@ int tun_alloc(char *dev)
   struct ifreq ifr; 
   memset(&ifr, 0, sizeof(ifr)); 
   //ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
-  ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
+  ifr.ifr_flags = devtype | IFF_NO_PI;
   strncpy(ifr.ifr_name, dev, IFNAMSIZ); 
   CHECKSYS(ioctl(fd, TUNSETIFF, (void *) &ifr));
   strncpy(dev, ifr.ifr_name, IFNAMSIZ); 
@@ -64,6 +64,16 @@ int tun_alloc(char *dev)
 static inline void put32(uint8_t *p, uint32_t n)
 {
   memcpy(p,&n,sizeof(n));
+}
+
+static inline void put16(uint8_t *p, uint16_t n)
+{
+  memcpy(p,&n,sizeof(n));
+}
+
+static inline void put8(uint8_t *p, uint8_t n)
+{
+  *p = n;
 }
 
 static inline uint32_t get32(uint8_t *p)
@@ -94,11 +104,12 @@ static void printbytes(uint8_t *p, size_t nbytes)
   }
 }
 
-void swap32(uint8_t *p, uint8_t *q)
+void swap(uint8_t *p, uint8_t *q, int nbytes)
 {
-  uint32_t t = get32(p);
-  put32(p,get32(q));
-  put32(q,t);
+  for (int i = 0; i < nbytes; i++) {
+    uint8_t t = *p; *p = *q; *q = t;
+    p++; q++;
+  }
 }
 
 // Rewrite packet to exchange src and dst addresses
@@ -117,8 +128,9 @@ void swap32(uint8_t *p, uint8_t *q)
 #define HLEN_OFFSET 0
 #define PROTO_OFFSET 9
 #define PROTO_ICMP 1
-#define PROTO_UDP 17
+#define PROTO_IGMP 2
 #define PROTO_TCP 6
+#define PROTO_UDP 17
 
 void describe4(uint8_t *p, size_t nbytes, const char *dev)
 {
@@ -146,71 +158,122 @@ void describe4(uint8_t *p, size_t nbytes, const char *dev)
    } else if (proto == PROTO_UDP) {
       uint16_t srcport = ntohs(get16(phdr+0));
       uint16_t dstport = ntohs(get16(phdr+2));
-      printf("dev=%s src=%s:%hu dst=%s:%hu len=%zu proto=%d\n",
+      printf("proto=4 dev=%s src=%s:%hu dst=%s:%hu len=%zu proto=%d\n",
              dev, fromaddr, srcport, toaddr, dstport, nbytes, proto);
    } else {
-      printf("dev=%s src=%s dst=%s len=%zu proto=%d\n",
+      printf("proto=4 dev=%s src=%s dst=%s len=%zu proto=%d\n",
              dev, fromaddr, toaddr, nbytes, proto);
    }
 }
-void reflect(uint8_t *p, size_t nbytes, const char *dev)
+
+void describe6(uint8_t *p, size_t nbytes, const char *dev)
+{
+  char fromaddr[INET6_ADDRSTRLEN];
+  char toaddr[INET6_ADDRSTRLEN];
+  inet_ntop(AF_INET6, p+SRC_OFFSET6, fromaddr, sizeof(fromaddr));
+  inet_ntop(AF_INET6, p+DST_OFFSET6, toaddr, sizeof(toaddr));
+  printf("proto=6 dev=%s src=%s dst=%s nbytes=%zu\n",
+         dev, fromaddr, toaddr, nbytes);
+  printbytes(p,40); // Just the header
+}
+
+bool doarp(uint8_t *p, size_t nbytes, const char *dev)
+{
+  (void)nbytes; (void)dev;
+  uint16_t op = ntohs(get16(p+14+6));
+  char fromaddr[INET_ADDRSTRLEN];
+  char toaddr[INET_ADDRSTRLEN];
+  // Skip 14 bytes of ethernet header
+  inet_ntop(AF_INET, p+14+12, fromaddr, sizeof(fromaddr));
+  inet_ntop(AF_INET, p+14+24, toaddr, sizeof(toaddr));
+  // Assume ethernet and IPv4
+  printf("proto=ARP op=%u src=%s dst=%s\n",
+         op, fromaddr, toaddr);
+  // Now construct the ARP response
+  put16(p+14+6,htons(2)); // Operation
+  uint8_t *mac = p+14+18;
+  mac[0] = 0x02; mac[1] = 0x00;
+  memcpy(mac+2,p+14+24,4); // Use expected IP as top 4 bytes of MAC
+  memcpy(p,mac,6); // Copy to source (it will be swapped later).
+  swap(p+14+8,p+14+18,10);
+  return true;
+}
+
+bool reflect(uint8_t *p, size_t nbytes, const char *dev)
 {
   uint8_t version = p[0] >> 4;
   switch (version) {
   case 4:
-    if (verbosity > 0) {
-       describe4(p,nbytes,dev);
-    }
+    if (verbosity > 0) describe4(p,nbytes,dev);
+    if (verbosity > 1) printbytes(p, nbytes);
     // Swap source and dest of an IPv4 packet
     // No checksum recalculation is necessary
-    swap32(p+SRC_OFFSET4,p+DST_OFFSET4);
-    break;
-  case 6:
-    if (verbosity > 0) {
-      char fromaddr[INET6_ADDRSTRLEN];
-      char toaddr[INET6_ADDRSTRLEN];
-      inet_ntop(AF_INET6, p+SRC_OFFSET6, fromaddr, sizeof(fromaddr));
-      inet_ntop(AF_INET6, p+DST_OFFSET6, toaddr, sizeof(toaddr));
-      printf("%zu: %s->%s\n", nbytes, fromaddr, toaddr);
+    if (p[DST_OFFSET4] >= 224) { // BODGE: first byte of dest address - should use proper prefix
+      printf("Skipping %u.0.0.0\n", p[DST_OFFSET4]);
+      return false;
+    } else {
+      swap(p+SRC_OFFSET4,p+DST_OFFSET4,4);
+      return true;
     }
+  case 6:
+    if (verbosity > 0) describe6(p,nbytes,dev);
+    if (verbosity > 1) printbytes(p, nbytes);
     // Swap source and dest of an IPv6 packet
     // No checksum recalculation is necessary
-    for (int i = 0; i < 4; i++) {
-      swap32(p+SRC_OFFSET6+4*i,p+DST_OFFSET6+4*i);
-    }
-    break;
+    swap(p+SRC_OFFSET6,p+DST_OFFSET6,16);
+    return true;
   default:
-     uint16_t etype;
-     memcpy(&etype,p+12,2);
-     etype = ntohs(etype);
-     printf("Unknown protocol %u: nbytes=%zu etype=%04x\n",
-            version, nbytes, etype);
-     printf("Addr1: "); printbytes(p,6);
-     printf("Addr2: "); printbytes(p+6,6);
-     if (etype == 0x0800) {
-        describe4(p+14,nbytes-16,dev);
-     }
+    printf("Unknown protocol %u: nbytes=%zu\n",
+           version, nbytes);
+    return false;
   }
-  if (verbosity > 1) {
-     printbytes(p, nbytes);
+}
+
+bool reflecttap(uint8_t *p, size_t nbytes, const char *dev)
+{
+  uint16_t etype;
+  memcpy(&etype,p+12,2);
+  etype = ntohs(etype);
+  printf("Frame etype=%04x nbytes=%zu\n", etype, nbytes);
+  printf("Addr1: "); printbytes(p,6);
+  printf("Addr2: "); printbytes(p+6,6);
+  bool respond = false;
+  if (etype == 0x0800 || etype == 0x86dd) {
+    // No CRC in TAP frames
+    respond = reflect(p+14,nbytes-14,dev);
+  } else if (etype == 0x0806) {
+    respond = doarp(p,nbytes,dev);
+  } else {
+    printbytes(p, nbytes);
   }
+  if (respond) swap(p,p+6,6);
+  return respond;
 }
 
 int main(int argc, char *argv[])
 {
   char *progname = argv[0];
   char *devname = NULL;
+  const char *usage = "Usage: %s [--v] [--tap] <prefix> [<devname>]\n";
+  int devtype = IFF_TUN;
+  
   argc--; argv++;
   while (argc > 0 && argv[0][0] == '-') {
-    if (strcmp(argv[0],"-v") == 0) {
+    if (strcmp(argv[0],"--v") == 0) {
       verbosity++;
+    } else if (strcmp(argv[0],"--tap") == 0) {
+      devtype = IFF_TAP;
     } else {
-      fprintf(stderr, "Usage: %s [-v]\n", progname);
+      fprintf(stderr, usage, progname);
       exit(0);
     }
     argc--; argv++;
   }
-  if (argc > 0) devname = argv[0];
+  if (argc > 1) {
+      fprintf(stderr, usage, progname);
+      exit(0);
+  }
+  if (argc > 0) devname = argv[1];
 
   char dev[IFNAMSIZ+1];
   memset(dev,0,sizeof(dev));
@@ -251,7 +314,7 @@ int main(int argc, char *argv[])
 #endif
 
   // Allocate the tun device
-  int fd = tun_alloc(dev);
+  int fd = tun_alloc(dev,devtype);
   if (fd < 0) exit(0);
 
 #if defined USE_CAPABILITIES
@@ -271,8 +334,15 @@ int main(int argc, char *argv[])
     ssize_t nread = read(fd,buf,sizeof(buf));
     CHECK(nread >= 0);
     if (nread == 0) break;
-    reflect(buf,nread,dev);
-    ssize_t nwrite = write(fd,buf,nread);
-    CHECK(nwrite == nread);
+    bool respond;
+    if (devtype == IFF_TUN) {
+      respond = reflect(buf,nread,dev);
+    } else {
+      respond = reflecttap(buf,nread,dev);
+    }
+    if (respond) {
+      ssize_t nwrite = write(fd,buf,nread);
+      CHECK(nwrite == nread);
+    }
   }
 }
