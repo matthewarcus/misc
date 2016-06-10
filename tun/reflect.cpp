@@ -184,7 +184,7 @@ bool doarp(uint8_t *p, size_t nbytes, const char *dev)
   char fromaddr[INET_ADDRSTRLEN];
   char toaddr[INET_ADDRSTRLEN];
   // Skip 14 bytes of ethernet header
-  inet_ntop(AF_INET, p+14+12, fromaddr, sizeof(fromaddr));
+  inet_ntop(AF_INET, p+14+14, fromaddr, sizeof(fromaddr));
   inet_ntop(AF_INET, p+14+24, toaddr, sizeof(toaddr));
   // Assume ethernet and IPv4
   printf("proto=ARP op=%u src=%s dst=%s\n",
