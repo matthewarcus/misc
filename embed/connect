@@ -1,0 +1,11 @@
+#!/bin/sh
+# Set tty to raw state, then use netcat for communication
+
+# Get the current ttystate as a string
+ttystate=`stty --save`
+# Don't interpret input
+stty raw -echo
+# Pass parameters on to netcat
+netcat $*
+# Finally, reset tty
+stty $ttystate

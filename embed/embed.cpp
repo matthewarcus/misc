@@ -92,9 +92,9 @@ int runforwarder(int mpty, int sockfd)
     }
   }
  finish:
-  CHECKSYS(close(mpty));
-  CHECKSYS(close(sockfd));
   CHECKSYS(close(epollfd));
+  CHECKSYS(close(sockfd));
+  CHECKSYS(close(mpty));
   return 0;
 }
 
@@ -127,30 +127,42 @@ emb_func(PyObject *self, PyObject *args)
 }
 
 static PyMethodDef EmbMethods[] = {
-    {"init", emb_init, METH_VARARGS,
-     "(Re)initialize the application."},
-    {"func", emb_func, METH_VARARGS,
-     "Run the application"},
+    {"init", emb_init, METH_VARARGS, "(Re)initialize the application."},
+    {"func", emb_func, METH_VARARGS, "Run the application"},
     {NULL, NULL, 0, NULL}
 };
 
-int runinterpreter(char *argname, int fd)
-{
+struct PyModuleDef moduledef = {
+        PyModuleDef_HEAD_INIT,
+        "emb",               /* m_name */
+        "This is a module",  /* m_doc */
+        -1,                  /* m_size */
+        EmbMethods,          /* m_methods */
+        NULL,                /* m_reload */
+        NULL,                /* m_traverse */
+        NULL,                /* m_clear */
+        NULL,                /* m_free */
+};
+
+PyMODINIT_FUNC PyInit_emb() {
+  return PyModule_Create(&moduledef);
+}
+
+int runinterpreter(const wchar_t *argname, int fd) {
   CHECKFD(dup2(fd,0));
   CHECKFD(dup2(fd,1));
   CHECKFD(dup2(fd,2));
   CHECKSYS(close(fd)); 
 
   Py_SetProgramName(argname);
+  PyImport_AppendInittab("emb",PyInit_emb);
   Py_Initialize();
-  Py_InitModule("emb", EmbMethods);
   PyRun_SimpleString("from time import time,ctime\n");
   PyRun_SimpleString("from emb import init,func\n");
   PyRun_SimpleString("print('Today is',ctime(time()))\n");
   PyRun_SimpleString("import readline\n");
   PyRun_InteractiveLoop(stdin, "-");
   Py_Finalize();
-
   return 0;
 }
 
@@ -195,9 +207,9 @@ int main(int argc, char *argv[])
       } else {
         CHECKSYS(close(sockfd));
         CHECKSYS(close(mpty)); 
-        // Default sigint here - will be replace by interpreter
+        // Default sigint here - will be replaced by interpreter
         setsignal(SIGINT, SIG_DFL);
-        return runinterpreter(argv[0],spty);
+        return runinterpreter(L"embed",spty);
       }
     }
   }
